@@ -45,3 +45,9 @@ make lint      # ruff
 ```
 
 Configuration: see [`.env.example`](.env.example).
+
+## Version 0.2.0
+
+The `lambda` extra adds IAM HTTP transport with buffered Invoke and LWA response streaming. Serialized requests are bounded, SDK retries are disabled, incomplete/error completion is surfaced, and resources close on completion or early cancellation. JWT verification still happens at each application boundary.
+
+`postgres.configure_schema` sets a controlled transaction-local schema, including under transaction pooling; gateway dev requires `neng_dev`. Migration locks include service/schema. Release the checked version/tag before updating consumers; CI builds and imports the installed wheel with the Lambda extra.
