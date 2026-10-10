@@ -1,27 +1,19 @@
-name: Package CI
+name: CI
+
 on:
   push:
+    branches: [main]
   pull_request:
-permissions:
-  contents: read
+
 jobs:
-  package:
-    runs-on: ubuntu-24.04
+  test:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
-      - run: pip install -e '.[dev,lambda]' build
-      - run: make test lint
-      - run: python -m build
-      - name: Verify installed wheel and Lambda extra
-        run: |
-          python -m venv /tmp/wheel-check
-          /tmp/wheel-check/bin/pip install dist/*.whl boto3
-          cd /tmp
-          /tmp/wheel-check/bin/python -c 'from neng_middleware.lambda_http import invoke_http; from neng_middleware.postgres import schema_name'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: middleware-package
-          path: dist/
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest -q

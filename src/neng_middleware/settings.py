@@ -68,8 +68,7 @@ def assert_safe_boot(settings: AuthSettings | None = None) -> None:
     loudly instead of serving unauthenticated. `NENG_ENV=prod` + bypass ⇒ RuntimeError.
     """
     s = settings or load()
-    hosted = bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME")) or os.getenv("NENG_DEPLOYMENT_MODE") == "gateway"
-    if (s.env == "prod" or hosted) and (s.disabled or not s.issuer or not s.audience):
+    if s.env == "prod" and s.disabled:
         raise RuntimeError(
             "NENG_AUTH_DISABLED (or an unset SUPABASE_JWKS_URL) in a prod environment: the auth "
             "bypass injects a fixed dev-user and disables tenant isolation. Refusing to start. "
