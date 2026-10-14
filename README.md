@@ -32,7 +32,7 @@ def list_deals(user_id: str = Depends(current_user)):
 Consumed via a pinned git tag; use an editable path dep for local dev:
 
 ```
-pip install "neng-middleware @ git+https://github.com/eshen89/neng-middleware.git@v0.1.0"
+pip install "neng-middleware[lambda] @ git+https://github.com/eshen89/neng-middleware.git@v0.3.0"
 # local dev:  pip install -e ../neng-middleware
 ```
 
@@ -45,3 +45,15 @@ make lint      # ruff
 ```
 
 Configuration: see [`.env.example`](.env.example).
+
+## Runtime release 0.3.0
+
+The `lambda` extra provides bounded IAM HTTP transport, confirmed streaming completion and
+cleanup on cancellation. Business invocation retries remain disabled. `postgres.configure_schema`
+applies a controlled transaction-local schema for transaction pooling. Hosted/gateway startup
+rejects authentication bypass in both dev and prod.
+
+`TimingMiddleware` and `phase` add optional request diagnostics under `NENG_TRACE_ENABLED=true`.
+Records contain route templates, status, completion and durations, never JWTs, payloads, SQL,
+identities or raw URLs. Correlation IDs do not authorize a request. These runtime helpers do not
+generate load or claim a browser latency SLO. See [CHANGELOG.md](CHANGELOG.md).
