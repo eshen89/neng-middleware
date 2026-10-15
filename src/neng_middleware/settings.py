@@ -60,17 +60,18 @@ def load() -> AuthSettings:
 
 
 def assert_safe_boot(settings: AuthSettings | None = None) -> None:
-    """Refuse to start a prod process with the auth bypass enabled.
+    """Require configured JWT verification in production, Lambda and gateway processes.
 
     The offline bypass is a ship-blocker if it ever reaches production: it would accept every
     request as `dev-user` and collapse all tenants into one. This is the belt-and-suspenders
     guard the plan calls for — a service calls it at startup so a misconfigured deploy crashes
-    loudly instead of serving unauthenticated. `NENG_ENV=prod` + bypass ⇒ RuntimeError.
+    loudly instead of serving unauthenticated. Only offline standalone development may bypass it.
     """
     s = settings or load()
-    if s.env == "prod" and s.disabled:
+    hosted = bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME")) or os.getenv("NENG_DEPLOYMENT_MODE") == "gateway"
+    if (s.env == "prod" or hosted) and (s.disabled or not s.issuer or not s.audience):
         raise RuntimeError(
-            "NENG_AUTH_DISABLED (or an unset SUPABASE_JWKS_URL) in a prod environment: the auth "
-            "bypass injects a fixed dev-user and disables tenant isolation. Refusing to start. "
-            "Set SUPABASE_JWKS_URL/ISSUER/AUDIENCE and clear NENG_AUTH_DISABLED, or set NENG_ENV!=prod."
+            "Hosted, gateway and prod environments cannot use the auth bypass or incomplete "
+            "JWT configuration. Refusing to start. Set SUPABASE_JWKS_URL/ISSUER/AUDIENCE and "
+            "clear NENG_AUTH_DISABLED. Offline bypass is only for standalone non-prod development."
         )

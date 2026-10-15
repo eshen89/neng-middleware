@@ -23,6 +23,7 @@ from jwt import PyJWKClient
 
 from .settings import DEV_USER, AuthSettings
 from .settings import load as load_settings
+from .timing import phase
 
 # One PyJWKClient per JWKS URL, reused across requests so its key cache actually persists (a
 # fresh client per request would re-fetch the JWKS every time and defeat the caching that keeps
@@ -32,13 +33,19 @@ _clients: dict[str, PyJWKClient] = {}
 _clients_lock = threading.Lock()
 
 
+class _TimedJWKClient(PyJWKClient):
+    def fetch_data(self):
+        with phase("auth_fetch"):
+            return super().fetch_data()
+
+
 def _jwks_client(url: str) -> PyJWKClient:
     client = _clients.get(url)
     if client is None:
         with _clients_lock:
             client = _clients.get(url)
             if client is None:
-                client = PyJWKClient(url)
+                client = _TimedJWKClient(url)
                 _clients[url] = client
     return client
 
@@ -68,15 +75,17 @@ def verify_token(token: str, settings: AuthSettings) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
     try:
-        signing_key = _jwks_client(settings.jwks_url).get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=list(settings.algorithms),
-            audience=settings.audience,
-            issuer=settings.issuer,
-            options={"require": ["exp", "iss", "aud", "sub"]},
-        )
+        with phase("auth_lookup"):
+            signing_key = _jwks_client(settings.jwks_url).get_signing_key_from_jwt(token)
+        with phase("auth_verify"):
+            claims = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=list(settings.algorithms),
+                audience=settings.audience,
+                issuer=settings.issuer,
+                options={"require": ["exp", "iss", "aud", "sub"]},
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -98,7 +107,8 @@ def current_user(authorization: str = Header(default="")) -> str:
     bypass is active it returns `DEV_USER` without touching the header, so local dev / tests /
     eval need no token — exactly the ergonomic the interim bearer gate had.
     """
-    settings = load_settings()
-    if settings.disabled:
-        return DEV_USER
-    return verify_token(_bearer(authorization), settings)
+    with phase("auth_total"):
+        settings = load_settings()
+        if settings.disabled:
+            return DEV_USER
+        return verify_token(_bearer(authorization), settings)
