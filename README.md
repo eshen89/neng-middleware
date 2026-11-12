@@ -57,3 +57,7 @@ rejects authentication bypass in both dev and prod.
 Records contain route templates, status, completion and durations, never JWTs, payloads, SQL,
 identities or raw URLs. Correlation IDs do not authorize a request. These runtime helpers do not
 generate load or claim a browser latency SLO. See [CHANGELOG.md](CHANGELOG.md).
+
+## CI and deployment triggers
+
+Branch pushes run lightweight checks. Pull requests run full validation, including the existing database, contract or installed-package checks where applicable. This repository publishes a shared library and has no service deployment. Wheel installation verification and package artifact upload run on PRs only.

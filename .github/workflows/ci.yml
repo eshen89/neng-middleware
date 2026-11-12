@@ -1,6 +1,7 @@
 name: Package CI
 on:
   push:
+    branches: ['**']
   pull_request:
 permissions:
   contents: read
@@ -16,12 +17,14 @@ jobs:
       - run: make test lint
       - run: python -m build
       - name: Verify installed wheel and Lambda extra
+        if: github.event_name == 'pull_request'
         run: |
           python -m venv /tmp/wheel-check
           /tmp/wheel-check/bin/pip install dist/*.whl boto3
           cd /tmp
           /tmp/wheel-check/bin/python -c 'from neng_middleware.lambda_http import invoke_http; from neng_middleware.postgres import schema_name'
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
         with:
           name: middleware-package
           path: dist/
