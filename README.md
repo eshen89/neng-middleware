@@ -1,63 +1,51 @@
 # neng-middleware
 
-Shared verification package for the Neng services — **not a deployed service**. Imported by
-[`neng-agent`](https://github.com/eshen89/neng-agent) and `neng-user` to give every request a
-verified user identity, and to sign internal service-to-service calls.
+Shared TypeScript library for Neng services on Node.js 24.
 
-Two responsibilities, deliberately tiny:
+- `assertSafeBoot` validates JWT configuration on startup. `currentUser` verifies a Supabase
+  bearer token against cached public keys and returns the verified subject. Verification
+  requires a signature, issuer, audience, expiry and subject. Offline standalone development
+  may use `dev-user`. Hosted, gateway and production processes require JWT verification.
+- `signedHeaders` signs IAM Function URL requests with the ambient AWS credentials.
+- `neng-middleware/lambda-http` invokes a Lambda with an HTTP v2 event and preserves the
+  end-user authorization header. The transport bounds the serialized request, disables SDK
+  retries, and requires successful invocation completion when streaming. Use `for await`
+  to consume the chunks and call `close()` if discarding a result before reading it.
+- `neng-middleware/postgres` sets the search path inside the caller's active transaction and
+  returns stable advisory lock IDs as `bigint`. Hosted gateway development requires `neng_dev`.
+- `neng-middleware/timing` provides request correlation and payload-free diagnostic timing.
+  Enable records with `NENG_TRACE_ENABLED=true`. Pass registered route templates to
+  `setRoute`, call `responseHeaders` before sending headers, and call `bodySent` after the
+  transport accepts a body chunk. Mark the final chunk only after successful completion.
 
-- **`current_user`** — a FastAPI dependency that verifies a Supabase JWT against the project's
-  JWKS (asymmetric RS256/ES256; the service holds only public keys), checks `iss`/`aud`/`exp`,
-  and returns the `sub`. **Fail-closed**: any failure — bad signature, expired, wrong audience,
-  unreachable JWKS with no cache — is a `401`. An offline bypass (`NENG_AUTH_DISABLED`, or an
-  unset `SUPABASE_JWKS_URL`) injects a fixed `dev-user` so the test suite and the chat eval run
-  with no network; `assert_safe_boot()` makes that bypass a **fatal boot error in prod**.
-- **`signed_headers`** — SigV4-signs a request to an IAM-protected (`AuthType AWS_IAM`) Function
-  URL, using the caller's ambient AWS credentials (the Lambda execution role in prod). Offline,
-  it returns plain headers so a local stub can be called without AWS.
+```typescript
+import { assertSafeBoot, currentUser } from "neng-middleware";
 
-## Use
+assertSafeBoot();
 
-```python
-from fastapi import Depends
-from neng_middleware import current_user, assert_safe_boot
-
-assert_safe_boot()  # at startup: refuse to run a prod process with the auth bypass on
-
-@app.get("/api/deals")
-def list_deals(user_id: str = Depends(current_user)):
-    ...  # user_id is the verified Supabase sub
+// In the authenticated request handler
+const userId = await currentUser(request.headers.authorization);
 ```
 
-Consumed via a pinned git tag; use an editable path dep for local dev:
-
-```
-pip install "neng-middleware[lambda] @ git+https://github.com/eshen89/neng-middleware.git@v0.3.0"
-# local dev:  pip install -e ../neng-middleware
-```
+The HTTP adapter maps `AuthenticationError.status` and `message` to the response. Configuration
+is listed in [`.env.example`](.env.example).
 
 ## Develop
 
+```sh
+make install
+make lint
+make build
+pnpm pack
 ```
-make install   # pip install -e ".[dev]"
-make test      # pytest — offline, fake JWKS, no network
-make lint      # ruff
-```
 
-Configuration: see [`.env.example`](.env.example).
+CI verifies the packed module from a separate project using both ESM and CommonJS. Consumers should install an immutable release tarball.
+Python consumers can use the existing [v0.3.0 tag](https://github.com/eshen89/neng-middleware/tree/v0.3.0).
 
-## Runtime release 0.3.0
+## Dev Lambda Layer
 
-The `lambda` extra provides bounded IAM HTTP transport, confirmed streaming completion and
-cleanup on cancellation. Business invocation retries remain disabled. `postgres.configure_schema`
-applies a controlled transaction-local schema for transaction pooling. Hosted/gateway startup
-rejects authentication bypass in both dev and prod.
-
-`TimingMiddleware` and `phase` add optional request diagnostics under `NENG_TRACE_ENABLED=true`.
-Records contain route templates, status, completion and durations, never JWTs, payloads, SQL,
-identities or raw URLs. Correlation IDs do not authorize a request. These runtime helpers do not
-generate load or claim a browser latency SLO. See [CHANGELOG.md](CHANGELOG.md).
-
-## CI and deployment triggers
-
-Branch pushes run lightweight checks. Pull requests run full validation, including the existing database, contract or installed-package checks where applicable. This repository publishes a shared library and has no service deployment. Wheel installation verification and package artifact upload run on PRs only.
+A successful package check on a push to `develop` publishes `neng-middleware-dev` in
+`us-west-2` through CDK. The Actions summary records the version ARN. Pin that ARN in
+the consumer stack and externalize `neng-middleware` and `neng-middleware/*` in its
+Lambda bundle. The Layer includes the locked production dependencies and both ESM and
+CommonJS entry points. Previous Layer versions are retained for consumer rollback.
