@@ -42,10 +42,10 @@ pnpm pack
 CI verifies the packed module from a separate project using both ESM and CommonJS. Consumers should install an immutable release tarball.
 Python consumers can use the existing [v0.3.0 tag](https://github.com/eshen89/neng-middleware/tree/v0.3.0).
 
-## Dev Lambda Layer
+## Lambda Layer releases
 
-A successful package check on a push to `develop` publishes `neng-middleware-dev` in
-`us-west-2` through CDK. The Actions summary records the version ARN. Pin that ARN in
-the consumer stack and externalize `neng-middleware` and `neng-middleware/*` in its
-Lambda bundle. The Layer includes the locked production dependencies and both ESM and
-CommonJS entry points. Previous Layer versions are retained for consumer rollback.
+GitHub Actions publishes `neng-middleware-dev` from `develop` and `neng-middleware-prod`
+from `main` in `us-west-2` after package verification. The run summary records the
+versioned ARN. Set `NENG_MIDDLEWARE_LAYER_ARN` in each consumer repository's corresponding
+GitHub environment to the verified ARN and deploy the consumer. Previous Layer versions
+are retained so the environment variable can be set back to a prior version.
