@@ -3,6 +3,7 @@ on:
   push:
     branches: ['**']
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -10,21 +11,103 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
-      - run: pip install -e '.[dev,lambda]' build
-      - run: make test lint
-      - run: python -m build
-      - name: Verify installed wheel and Lambda extra
-        if: github.event_name == 'pull_request'
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: make install lint build
+      - name: Pack Node package
+        run: pnpm pack --pack-destination "${{ runner.temp }}/middleware-package"
+      - name: Verify installed package
+        env:
+          PACKAGE_DIR: ${{ runner.temp }}/middleware-package
         run: |
-          python -m venv /tmp/wheel-check
-          /tmp/wheel-check/bin/pip install dist/*.whl boto3
-          cd /tmp
-          /tmp/wheel-check/bin/python -c 'from neng_middleware.lambda_http import invoke_http; from neng_middleware.postgres import schema_name'
+          check_dir=$(mktemp -d)
+          cd "$check_dir"
+          printf '{"private":true}\n' > package.json
+          pnpm add "$PACKAGE_DIR"/*.tgz
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { currentUser, DEV_USER, signedHeaders } from "neng-middleware";
+          import { invokeHttp } from "neng-middleware/lambda-http";
+          import { schemaName } from "neng-middleware/postgres";
+          import { withRequestTiming } from "neng-middleware/timing";
+          assert.equal(await currentUser("", {}), DEV_USER);
+          assert.equal(schemaName({}), "public");
+          for (const entry of [signedHeaders, invokeHttp, withRequestTiming]) {
+            assert.equal(typeof entry, "function");
+          }
+          JS
+          node --no-experimental-require-module -e 'require("neng-middleware")'
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'pull_request'
         with:
           name: middleware-package
-          path: dist/
+          path: ${{ runner.temp }}/middleware-package/*.tgz
+
+  publish-layer:
+    needs: package
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: publish-neng-middleware-${{ github.ref_name }}
+      cancel-in-progress: false
+    env:
+      NENG_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_PAGER: ""
+      NENG_RELEASE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Build and verify Layer
+        run: |
+          test "$AWS_REGION" = us-west-2
+          test "$(git rev-parse HEAD)" = "$NENG_RELEASE_SHA"
+          make install build
+          pnpm layer:stage
+          modules="$PWD/.layer/nodejs/node_modules"
+          cd "$RUNNER_TEMP"
+          NODE_PATH="$modules" node --no-experimental-require-module <<'JS'
+          const assert = require("node:assert/strict");
+          const middleware = require("neng-middleware");
+          assert.equal(typeof middleware.currentUser, "function");
+          assert.equal(typeof require("neng-middleware/lambda-http").invokeHttp, "function");
+          assert.equal(require("neng-middleware/postgres").schemaName({}), "public");
+          assert.equal(typeof require("neng-middleware/timing").withRequestTiming, "function");
+          JS
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::543458927140:role/github-actions
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: '543458927140'
+      - name: Publish the versioned Layer
+        run: |
+          stack="neng-middleware-$NENG_ENV"
+          pnpm cdk synth "$stack" --strict --quiet
+          pnpm cdk diff "$stack" --app cdk.out --method template
+          pnpm cdk deploy "$stack" --app cdk.out --require-approval never \
+            --parameters BootstrapVersion=/cdk-bootstrap/hnb659fds/version --outputs-file "$RUNNER_TEMP/layer-outputs.json"
+      - name: Verify the published revision and runtime
+        run: |
+          stack="neng-middleware-$NENG_ENV"
+          arn=$(jq -er --arg stack "$stack" '.[$stack].LayerVersionArn' "$RUNNER_TEMP/layer-outputs.json")
+          [[ "$arn" =~ ^arn:aws:lambda:us-west-2:543458927140:layer:$stack:[1-9][0-9]*$ ]]
+          aws lambda get-layer-version-by-arn --arn "$arn" --query '{description:Description,runtimes:CompatibleRuntimes,bytes:Content.CodeSize}' --output json |
+            jq -e --arg stage "$NENG_ENV" --arg sha "$NENG_RELEASE_SHA" '.description == ("neng-middleware " + $stage + " revision " + $sha) and .runtimes == ["nodejs24.x"] and .bytes > 0'
+          printf 'Published Layer: `%s`\n' "$arn" >> "$GITHUB_STEP_SUMMARY"

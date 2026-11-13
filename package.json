@@ -1,0 +1,67 @@
+{
+  "name": "neng-middleware",
+  "version": "1.0.0",
+  "description": "Shared JWT verification, IAM transport, PostgreSQL schema selection and request timing for Neng",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/layer.cjs"
+      }
+    },
+    "./lambda-http": {
+      "import": "./dist/aws/lambda-http.js",
+      "require": {
+        "types": "./dist/aws/lambda-http.d.ts",
+        "default": "./dist/layer.cjs"
+      }
+    },
+    "./postgres": {
+      "import": "./dist/data/postgres.js",
+      "require": {
+        "types": "./dist/data/postgres.d.ts",
+        "default": "./dist/layer.cjs"
+      }
+    },
+    "./timing": {
+      "import": "./dist/observability/timing.js",
+      "require": {
+        "types": "./dist/observability/timing.d.ts",
+        "default": "./dist/layer.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc && esbuild infra/layer-entry.ts --bundle --platform=node --target=node24 --format=cjs --external:@aws-sdk/* --external:@smithy/* --outfile=dist/layer.cjs",
+    "prepack": "pnpm build",
+    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node --test --test-timeout=10000 \".test-dist/tests/**/*.test.js\"",
+    "layer:stage": "bash infra/stage-layer.sh",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "@aws-sdk/client-lambda": "3.1164.0",
+    "@aws-sdk/credential-provider-node": "3.972.94",
+    "@smithy/core": "3.39.0",
+    "@smithy/node-http-handler": "4.14.2",
+    "@smithy/signature-v4": "5.7.5",
+    "jose": "6.2.15"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "aws-cdk": "2.1148.0",
+    "aws-cdk-lib": "2.273.0",
+    "constructs": "10.8.1",
+    "esbuild": "0.28.2"
+  }
+}

@@ -1,13 +1,13 @@
-.PHONY: install test lint fmt
+.PHONY: install test lint build
 
 install:
-	pip install -e ".[dev]"
+	pnpm install --frozen-lockfile
 
 test:
-	python -m pytest -q tests
+	pnpm test
 
 lint:
-	ruff check src tests
+	pnpm check
 
-fmt:
-	ruff format src tests
+build:
+	pnpm build

@@ -6,13 +6,15 @@ This repository is a shared package, not a deployed service. Own Supabase JWT ve
 
 Never enable SDK automatic retries for business invocations. Bound the full serialized request, close SDK streams on early cancellation, and surface incomplete/error completion. SSE must not claim terminal success before invocation completion. Keep issuer/audience/expiry/signature validation identical across consumers.
 
-After `make test lint`, run `python -m build` and verify the installed wheel with the `lambda` extra in a clean environment. Publish an immutable checked version/tag before updating consumer pins; do not rewrite existing tags. The currently consumed runtime release is v0.2.0. Documentation-only changes do not require a new package release.
+After `make lint build`, run `pnpm pack` and verify the installed package in a clean project.
+Publish an immutable checked version before updating consumer pins. Existing Python tags remain
+available for older consumers.
 
 ## Local verification
 
-Use Python 3.11 and this repository's own `.venv`; recreate an environment with a stale interpreter path. Install dependencies using `make install` in that environment, then `make test` and `make lint`. Use `pytest tests`, avoiding tests copied into CDK assets.
+Use Node.js 24 and the pnpm version in package.json. Install with `make install` and run
+`make lint build`. Run database probes against disposable PostgreSQL only.
 
-Postgres tests use a throwaway instance via `NENG_TEST_POSTGRES_URL`. A skip is not a passing Postgres or write-gate check; CI must execute required database checks. Never point fixture tests at production data.
 ## Shared invariants
 
 - Neng prepares drafts only. Never send a DocuSign envelope or email; envelopes use `status="created"`.
