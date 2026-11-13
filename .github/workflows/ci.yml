@@ -3,6 +3,7 @@ on:
   push:
     branches: ['**']
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -47,20 +48,21 @@ jobs:
           name: middleware-package
           path: ${{ runner.temp }}/middleware-package/*.tgz
 
-  publish-dev:
+  publish-layer:
     needs: package
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    environment: dev
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
     concurrency:
-      group: publish-neng-middleware-dev
+      group: publish-neng-middleware-${{ github.ref_name }}
       cancel-in-progress: false
     env:
-      AWS_REGION: us-west-2
+      NENG_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_PAGER: ""
       NENG_RELEASE_SHA: ${{ github.sha }}
     steps:
@@ -75,6 +77,7 @@ jobs:
           cache: pnpm
       - name: Build and verify Layer
         run: |
+          test "$AWS_REGION" = us-west-2
           test "$(git rev-parse HEAD)" = "$NENG_RELEASE_SHA"
           make install build
           pnpm layer:stage
@@ -95,14 +98,16 @@ jobs:
           allowed-account-ids: '543458927140'
       - name: Publish the versioned Layer
         run: |
-          pnpm cdk synth neng-middleware-dev --strict --quiet
-          pnpm cdk diff neng-middleware-dev --app cdk.out --method template
-          pnpm cdk deploy neng-middleware-dev --app cdk.out --require-approval never \
+          stack="neng-middleware-$NENG_ENV"
+          pnpm cdk synth "$stack" --strict --quiet
+          pnpm cdk diff "$stack" --app cdk.out --method template
+          pnpm cdk deploy "$stack" --app cdk.out --require-approval never \
             --parameters BootstrapVersion=/cdk-bootstrap/hnb659fds/version --outputs-file "$RUNNER_TEMP/layer-outputs.json"
       - name: Verify the published revision and runtime
         run: |
-          arn=$(jq -er '."neng-middleware-dev".LayerVersionArn' "$RUNNER_TEMP/layer-outputs.json")
-          [[ "$arn" =~ ^arn:aws:lambda:us-west-2:543458927140:layer:neng-middleware-dev:[0-9]+$ ]]
+          stack="neng-middleware-$NENG_ENV"
+          arn=$(jq -er --arg stack "$stack" '.[$stack].LayerVersionArn' "$RUNNER_TEMP/layer-outputs.json")
+          [[ "$arn" =~ ^arn:aws:lambda:us-west-2:543458927140:layer:$stack:[1-9][0-9]*$ ]]
           aws lambda get-layer-version-by-arn --arn "$arn" --query '{description:Description,runtimes:CompatibleRuntimes,bytes:Content.CodeSize}' --output json |
-            jq -e --arg sha "$NENG_RELEASE_SHA" '.description == ("neng-middleware dev revision " + $sha) and .runtimes == ["nodejs24.x"] and .bytes > 0'
+            jq -e --arg stage "$NENG_ENV" --arg sha "$NENG_RELEASE_SHA" '.description == ("neng-middleware " + $stage + " revision " + $sha) and .runtimes == ["nodejs24.x"] and .bytes > 0'
           printf 'Published Layer: `%s`\n' "$arn" >> "$GITHUB_STEP_SUMMARY"
